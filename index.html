@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#080a12" />
+    <meta name="description" content="MatildaRate — твои персональные тир-листы." />
+    <title>MatildaRate — Tier Lab</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="noise" aria-hidden="true"></div>
+    <main class="app">
+      <header class="topbar">
+        <a class="brand" href="#top" aria-label="MatildaRate">
+          <span class="brand-mark">M</span>
+            <span>MATILDA<span>RATE</span></span>
+        </a>
+        <div class="connection"><i></i> LOCAL SESSION</div>
+        <nav class="top-nav" aria-label="Разделы">
+          <button class="top-nav-button active" data-view="lists">Тир-листы</button>
+          <button class="top-nav-button" data-view="stats">Статистика</button>
+        </nav>
+        <div class="header-progress">
+          <span id="progressText">0 / 50</span>
+          <div class="progress-track"><i id="progressBar"></i></div>
+        </div>
+      </header>
+
+      <section class="intro" id="top" data-screen="editor">
+        <div>
+        <p class="kicker">PERSONAL RANKING SYSTEM / 01</p>
+          <h1>Твой личный<br /><em>тир-лист.</em></h1>
+          <p class="intro-copy">Перетащи карточку в нужную строку или выбери карточку и уровень.</p>
+        </div>
+        <div class="completion-card" id="completionCard">
+          <span class="completion-ring"><span class="completion-value"><b id="completionNumber">0</b><small>%</small></span></span>
+          <div><strong id="completionTitle">Начни расстановку</strong><p id="completionHint">50 объектов ждут твоей оценки</p></div>
+        </div>
+      </section>
+
+      <section class="workspace" data-screen="editor" aria-label="Редактор тир-листа">
+        <aside class="source-panel">
+          <div class="panel-head">
+            <div><p class="kicker">INPUT QUEUE</p><h2>Объекты <span id="poolCount">50</span></h2></div>
+            <button class="icon-button" id="clearSelection" aria-label="Снять выбор" title="Снять выбор">×</button>
+          </div>
+          <label class="search"><span>⌕</span><input id="searchInput" type="search" placeholder="Найти объект" autocomplete="off" /></label>
+          <p class="selection-tip" id="selectionTip">Нажми на объект, чтобы выбрать его.</p>
+          <div class="fruit-pool" id="fruitPool" data-drop-zone="pool" aria-label="Нераспределённые объекты"></div>
+        </aside>
+
+        <section class="board-panel">
+          <div class="board-head">
+            <div><p class="kicker">RANKING MATRIX</p><h2>Твоя шкала</h2></div>
+          </div>
+          <div class="tier-board" id="tierBoard"></div>
+          <div class="tier-key" id="tierKey"></div>
+        </section>
+      </section>
+
+      <footer class="actionbar" data-screen="editor">
+        <div class="autosave"><i></i><span id="saveState">Изменения сохраняются автоматически</span></div>
+        <div class="actions">
+          <button class="button button-quiet" id="undoButton" disabled>↶ Отменить</button>
+          <button class="button button-quiet" id="resetButton">Сбросить</button>
+          <button class="button button-primary" id="finishButton" disabled>Завершить рейтинг <span>→</span></button>
+        </div>
+      </footer>
+
+      <section class="library-screen" data-screen="lists" hidden>
+        <p class="kicker">YOUR COLLECTION / 01</p>
+        <h1>Тир-листы</h1>
+        <p class="screen-copy">Твои рейтинги в одном месте.</p>
+        <div class="list-library" id="listLibrary"></div>
+      </section>
+
+      <section class="library-screen" data-screen="stats" hidden>
+        <p class="kicker">YOUR DATA / LIVE</p>
+        <h1>Статистика</h1>
+        <p class="screen-copy">Общая сводка и подробности по каждому тир-листу.</p>
+        <div class="stats-grid" id="statsGrid"></div>
+      </section>
+    </main>
+
+    <div class="modal-backdrop" id="modalBackdrop" hidden>
+      <section class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+        <p class="kicker">RANKING COMPLETE</p>
+        <h2 id="modalTitle">Тир-лист готов</h2>
+        <p>Все объекты распределены. Рейтинг сохранён в этом браузере.</p>
+        <button class="button button-primary" id="closeModal">Продолжить</button>
+      </section>
+    </div>
+
+    <div class="toast" id="toast" role="status"></div>
+    <script src="app.js"></script>
+  </body>
+</html>
