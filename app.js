@@ -26,7 +26,8 @@
       { id: 'C', name: 'Middle', color: '#9ba9bd', text: '#202a38', value: 4 },
       { id: 'D', name: 'Below Average', color: '#9cb8a5', text: '#1d3024', value: 3 },
       { id: 'E', name: 'Bad', color: '#a28d78', text: '#2d2118', value: 2 },
-      { id: 'F', name: 'Terrible', color: '#211d1b', text: '#fff', value: 1 }
+      { id: 'F', name: 'Terrible', color: '#211d1b', text: '#fff', value: 1 },
+      { id: '?', name: 'Unknown', color: '#626b7a', text: '#fff', value: null }
     ]
   };
 
@@ -58,6 +59,7 @@
   let selectedId = null;
   let query = '';
   let draggedId = null;
+  let dropBeforeId = null;
   let lastPlacedId = null;
   let undoStack = [];
   let state = loadState();
@@ -72,7 +74,7 @@
     try {
       const response = await fetch('./tierlists.json', { cache: 'no-store' });
       if (!response.ok) throw new Error('Catalog unavailable');
-      catalog = await response.json();
+      catalog = ensureUnknownTier(await response.json());
       category = catalog.categories[0];
       state = normalizeState(loadState());
       poolOrder = shuffle(category.items.map((_, index) => `${category.id}-${index}`));
@@ -92,12 +94,19 @@
       if (!response.ok) return;
       const next = await response.json();
       if (JSON.stringify(next) === JSON.stringify(catalog)) return;
-      catalog = next;
+      catalog = ensureUnknownTier(next);
       category = catalog.categories.find((entry) => entry.id === category.id) || catalog.categories[0];
       state = normalizeState(readList(category));
       render();
       showToast('Список тир-листов обновлён из JSON.');
     } catch { /* Keep the last valid catalog while the file is being edited. */ }
+  }
+
+  function ensureUnknownTier(source) {
+    if (!source.tiers.some((tier) => tier.id === '?')) {
+      source.tiers.push({ id: '?', name: 'Unknown', color: '#626b7a', text: '#ffffff', value: null });
+    }
+    return source;
   }
 
   function blankState() {
@@ -173,34 +182,62 @@
   }
 
   function renderLibrary() {
-    ui.listLibrary.innerHTML = catalog.categories.map((entry) => `
+    ui.listLibrary.innerHTML = catalog.categories.map((entry) => {
+      const saved = readList(entry);
+      const assigned = Object.values(saved.tiers).flat().length;
+      const isDone = Boolean(saved.completedAt);
+      return `
       <article class="library-entry" data-list-id="${escapeHtml(entry.id)}">
         <button class="list-card" data-open-list="${escapeHtml(entry.id)}">
-          <span class="list-card-copy"><strong>${escapeHtml(entry.name)}</strong><small>${entry.items.length} объектов</small></span>
-          <span class="list-arrow">Открыть →</span>
+          <span class="list-card-copy"><strong>${escapeHtml(entry.name)}</strong><small>${isDone ? 'Завершено' : `${assigned} / ${entry.items.length} компонентов`}</small></span>
+          <span class="list-arrow">${isDone ? 'Изменить' : 'Продолжить'} →</span>
         </button>
         <div class="list-entry-actions" hidden>
           <button class="button button-quiet" data-restart>Заново</button>
-          <button class="button button-primary" data-edit>Изменить</button>
+          <button class="button button-primary" data-edit>${isDone ? 'Изменить' : 'Продолжить'}</button>
         </div>
-      </article>`).join('');
+      </article>`;
+    }).join('');
 
     ui.listLibrary.querySelectorAll('[data-open-list]').forEach((button) => button.addEventListener('click', () => {
       const entry = catalog.categories.find((item) => item.id === button.dataset.openList);
       const actions = button.parentElement.querySelector('.list-entry-actions');
       ui.listLibrary.querySelectorAll('.list-entry-actions').forEach((node) => { node.hidden = true; });
       const saved = readList(entry);
-      if (saved.completedAt || Object.values(saved.tiers).flat().length) actions.hidden = false;
-      else openCategory(entry, saved);
+      actions.hidden = !actions.hidden;
     }));
     ui.listLibrary.querySelectorAll('[data-edit]').forEach((button) => button.addEventListener('click', () => {
-      const entry = catalog.categories.find((item) => item.id === button.closest('[data-list-id]').dataset.listId);
+      const card = button.closest('.library-entry');
+      const entry = catalog.categories.find((item) => item.id === card.dataset.listId);
       openCategory(entry, readList(entry));
     }));
     ui.listLibrary.querySelectorAll('[data-restart]').forEach((button) => button.addEventListener('click', () => {
       const entry = catalog.categories.find((item) => item.id === button.closest('[data-list-id]').dataset.listId);
-      openCategory(entry, blankState());
+      showRestartDialog(entry);
     }));
+  }
+
+  function showRestartDialog(entry) {
+    const modalContent = ui.modal.querySelector('.modal');
+    modalContent.innerHTML = `
+      <p class="kicker">RESET TIER LIST</p>
+      <h2>Начать заново?</h2>
+      <p>Все оценки тир-листа «${escapeHtml(entry.name)}» будут очищены. Накопленное время и дата первого рейтинга сохранятся.</p>
+      <div class="finish-actions">
+        <button class="button button-quiet" id="cancelRestart">Отмена</button>
+        <button class="button button-primary" id="confirmRestart">Заново</button>
+      </div>`;
+    ui.modal.hidden = false;
+    modalContent.querySelector('#cancelRestart').addEventListener('click', () => { ui.modal.hidden = true; });
+    modalContent.querySelector('#confirmRestart').addEventListener('click', () => {
+      ui.modal.hidden = true;
+      const previous = readList(entry);
+      const fresh = blankState();
+      fresh.timeSpentMs = previous.timeSpentMs || 0;
+      fresh.firstRatedAt = previous.firstRatedAt || null;
+      fresh.lastChangedAt = previous.lastChangedAt || null;
+      openCategory(entry, fresh);
+    });
   }
 
   function readList(entry) {
@@ -232,21 +269,22 @@
     const lists = catalog.categories.map((entry) => {
       const saved = entry.id === category.id ? state : readList(entry);
       const total = Object.values(saved.tiers).flat().length;
-      const average = total ? catalog.tiers.reduce((sum, tier) => sum + saved.tiers[tier.id].length * tier.value, 0) / total : null;
+      const rated = catalog.tiers.filter((tier) => tier.value !== null).reduce((sum, tier) => sum + saved.tiers[tier.id].length, 0);
+      const average = rated ? catalog.tiers.reduce((sum, tier) => sum + saved.tiers[tier.id].length * (tier.value || 0), 0) / rated : null;
       const rows = catalog.tiers.map((tier) => `<div class="stat-tier" style="--tier-color:${tier.color};--tier-text:${tier.text}"><b>${tier.id}</b><span>${tier.name}</span><strong>${saved.tiers[tier.id].length}</strong><i><em style="width:${total ? saved.tiers[tier.id].length / total * 100 : 0}%"></em></i></div>`).join('');
       return { entry, saved, total, average, rows };
     });
     const ranked = lists.reduce((sum, list) => sum + list.total, 0);
-    const points = lists.reduce((sum, list) => sum + catalog.tiers.reduce((part, tier) => part + list.saved.tiers[tier.id].length * tier.value, 0), 0);
-    const averageAll = ranked ? (points / ranked).toFixed(1) : '—';
+    const points = lists.reduce((sum, list) => sum + catalog.tiers.reduce((part, tier) => part + list.saved.tiers[tier.id].length * (tier.value || 0), 0), 0);
+    const ratedAll = lists.reduce((sum, list) => sum + catalog.tiers.filter((tier) => tier.value !== null).reduce((n, tier) => n + list.saved.tiers[tier.id].length, 0), 0);
+    const averageAll = ratedAll ? (points / ratedAll).toFixed(1) : '—';
     const totalTime = lists.reduce((sum, list) => sum + (list.saved.timeSpentMs || 0), 0);
     const averageTime = lists.length ? totalTime / lists.length : 0;
     const maxTime = Math.max(0, ...lists.map((list) => list.saved.timeSpentMs || 0));
     ui.statsGrid.innerHTML = `
       <div class="stats-section"><h2>Общая статистика</h2><div class="stats-grid">
-        <article class="stat-card"><span>Тир-листов</span><strong>${lists.length}</strong></article>
-        <article class="stat-card"><span>Распределено объектов</span><strong>${ranked}</strong></article>
-        <article class="stat-card"><span>Завершено</span><strong>${lists.filter((list) => list.saved.completedAt).length}</strong></article>
+        <article class="stat-card"><span>Тир-листы</span><strong>${lists.filter((list) => list.saved.completedAt).length} / ${lists.length}<small> · ${lists.length ? Math.round(lists.filter((list) => list.saved.completedAt).length / lists.length * 100) : 0}%</small></strong></article>
+        <article class="stat-card"><span>Компоненты распределены</span><strong>${ranked} / ${lists.reduce((sum, list) => sum + list.entry.items.length, 0)}<small> · ${lists.reduce((sum, list) => sum + list.entry.items.length, 0) ? Math.round(ranked / lists.reduce((sum, list) => sum + list.entry.items.length, 0) * 100) : 0}%</small></strong></article>
         <article class="stat-card"><span>Средняя оценка всех списков</span><strong class="stat-average">${averageAll}<small> / 8</small></strong></article>
         <article class="stat-card"><span>Общее время на сайте</span><strong>${formatDuration(totalTime)}</strong></article>
         <article class="stat-card"><span>Время на тир-лист: среднее / максимум</span><strong>${formatDuration(averageTime)} <small>/ ${formatDuration(maxTime)}</small></strong></article>
@@ -283,9 +321,10 @@
   }
 
   function averageScore() {
-    const count = rankedCount();
+    const ratedTiers = catalog.tiers.filter((tier) => tier.value !== null);
+    const count = ratedTiers.reduce((sum, tier) => sum + state.tiers[tier.id].length, 0);
     if (!count) return '—';
-    const points = catalog.tiers.reduce((sum, tier) => sum + state.tiers[tier.id].length * tier.value, 0);
+    const points = ratedTiers.reduce((sum, tier) => sum + state.tiers[tier.id].length * tier.value, 0);
     return (points / count).toFixed(1);
   }
 
@@ -379,8 +418,13 @@
     const left = total - count;
     const complete = count === total;
 
-    ui.progressText.textContent = `${count} / ${total}`;
-    ui.progressBar.style.width = `${percent}%`;
+    const doneLists = catalog.categories.filter((entry) => {
+      const saved = entry.id === category.id ? state : readList(entry);
+      return Object.values(saved.tiers).flat().length === entry.items.length;
+    }).length;
+    const listPercent = catalog.categories.length ? Math.round(doneLists / catalog.categories.length * 100) : 0;
+    ui.progressText.textContent = `${doneLists} / ${catalog.categories.length}`;
+    ui.progressBar.style.width = `${listPercent}%`;
     ui.completionNumber.textContent = String(percent);
     ui.finish.disabled = !complete;
     ui.undo.disabled = undoStack.length === 0;
@@ -388,10 +432,10 @@
     if (complete) {
       ui.completionTitle.textContent = 'Всё распределено';
       ui.completionHint.textContent = 'Тир-лист можно завершить';
-      ui.finish.textContent = 'Завершить рейтинг →';
+      ui.finish.textContent = 'Завершить рейтинг';
     } else if (count === 0) {
       ui.completionTitle.textContent = 'Начни расстановку';
-      ui.completionHint.textContent = `${total} фруктов ждут твоей оценки`;
+      ui.completionHint.textContent = `${total} компонентов ждут оценки`;
       ui.finish.textContent = `Осталось ${left}`;
     } else {
       ui.completionTitle.textContent = 'Продолжай';
@@ -404,7 +448,7 @@
       ui.selectionTip.textContent = `Выбрано: ${selected.name}. Теперь нажми на нужный уровень справа.`;
       ui.selectionTip.classList.add('active');
     } else {
-      ui.selectionTip.textContent = 'Нажми на фрукт, чтобы выбрать его.';
+      ui.selectionTip.textContent = 'Нажми на компонент, чтобы выбрать его.';
       ui.selectionTip.classList.remove('active');
     }
   }
@@ -424,16 +468,93 @@
 
       chip.addEventListener('dragstart', (event) => {
         draggedId = chip.dataset.itemId;
+        dropBeforeId = null;
         chip.classList.add('dragging');
+        document.body.classList.add('is-dragging');
         event.dataTransfer.effectAllowed = 'move';
         event.dataTransfer.setData('text/plain', draggedId);
       });
 
       chip.addEventListener('dragend', () => {
         draggedId = null;
+        dropBeforeId = null;
         chip.classList.remove('dragging');
+        document.body.classList.remove('is-dragging');
+        document.querySelectorAll('.drop-placeholder').forEach((placeholder) => placeholder.remove());
+        document.querySelectorAll('.reorder-target, .reorder-before, .reorder-after').forEach((node) => {
+          node.classList.remove('reorder-target', 'reorder-before', 'reorder-after');
+        });
       });
+
+      if (chip.dataset.ranked === 'true') {
+        chip.addEventListener('dragover', (event) => {
+          event.preventDefault();
+          const moving = document.querySelector('.fruit-chip.dragging');
+          if (!moving || moving === chip) return;
+          const rect = chip.getBoundingClientRect();
+          const insertAfter = event.clientX > rect.left + rect.width / 2;
+          const movingZone = moving.closest('[data-drop-zone]');
+          const targetZone = chip.closest('[data-drop-zone]');
+          if (movingZone === targetZone) {
+            document.querySelectorAll('.reorder-target, .reorder-before, .reorder-after').forEach((node) => {
+              node.classList.remove('reorder-target', 'reorder-before', 'reorder-after');
+            });
+            chip.classList.add('reorder-target');
+            chip.classList.toggle('reorder-before', !insertAfter);
+            chip.classList.toggle('reorder-after', insertAfter);
+            const siblings = [...chip.parentElement.querySelectorAll('.fruit-chip')].filter((node) => node !== moving);
+            const targetIndex = siblings.indexOf(chip);
+            const nextIndex = targetIndex + (insertAfter ? 1 : 0);
+            dropBeforeId = siblings[nextIndex]?.dataset.itemId || null;
+          } else {
+            document.querySelectorAll('.reorder-target').forEach((node) => node.classList.remove('reorder-target', 'reorder-before', 'reorder-after'));
+            placeDropPlaceholder(chip.parentElement, insertAfter ? chip.nextElementSibling : chip, moving);
+          }
+        });
+        chip.addEventListener('drop', (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          const movingId = event.dataTransfer.getData('text/plain') || draggedId;
+          const targetZone = chip.closest('[data-drop-zone]');
+          const moving = document.querySelector('.fruit-chip.dragging');
+          const sameTier = moving?.closest('[data-drop-zone]') === targetZone;
+          const beforeId = dropBeforeId;
+          document.querySelectorAll('.drop-placeholder').forEach((placeholder) => placeholder.remove());
+          document.querySelectorAll('.reorder-target').forEach((node) => node.classList.remove('reorder-target', 'reorder-before', 'reorder-after'));
+          if (movingId) moveItem(movingId, targetZone.dataset.dropZone, beforeId, true);
+        });
+      }
     });
+  }
+
+  function placeDropPlaceholder(container, reference, draggedChip) {
+    const existing = document.querySelector('.drop-placeholder');
+    const placeholder = existing || document.createElement('span');
+    placeholder.className = 'drop-placeholder';
+    placeholder.setAttribute('aria-hidden', 'true');
+    const bounds = draggedChip.getBoundingClientRect();
+    const containerRect = container.getBoundingClientRect();
+    let markerX = 4;
+    let markerY = 10;
+    if (reference?.classList.contains('fruit-chip')) {
+      const rect = reference.getBoundingClientRect();
+      markerX = rect.left - containerRect.left - 5;
+      markerY = rect.top - containerRect.top - 2;
+      dropBeforeId = reference.dataset.itemId;
+    } else {
+      const chips = container.querySelectorAll('.fruit-chip');
+      const last = chips[chips.length - 1];
+      if (last) {
+        const rect = last.getBoundingClientRect();
+        markerX = rect.right - containerRect.left + 2;
+        markerY = rect.top - containerRect.top - 2;
+      }
+      dropBeforeId = null;
+    }
+    placeholder.style.left = `${markerX}px`;
+    placeholder.style.top = `${markerY}px`;
+    placeholder.style.height = `${Math.max(bounds.height, 28)}px`;
+    if (placeholder.parentElement !== container) container.append(placeholder);
   }
 
   function bindDropZones() {
@@ -453,6 +574,11 @@
       zone.addEventListener('dragover', (event) => {
         event.preventDefault();
         zone.classList.add('drop-target');
+        const moving = document.querySelector('.fruit-chip.dragging');
+        const movingZone = moving?.closest('[data-drop-zone]');
+        if (moving && zone.dataset.dropZone !== 'pool' && movingZone !== zone && (event.target === zone || event.target.classList.contains('tier-content'))) {
+          placeDropPlaceholder(zone.querySelector('.tier-content'), null, moving);
+        }
       });
 
       zone.addEventListener('dragleave', () => zone.classList.remove('drop-target'));
@@ -461,21 +587,30 @@
         event.preventDefault();
         zone.classList.remove('drop-target');
         const id = event.dataTransfer.getData('text/plain') || draggedId;
-        if (id) moveItem(id, zone.dataset.dropZone);
+        const placeholder = document.querySelector('.drop-placeholder');
+        const next = placeholder?.nextElementSibling;
+        const beforeId = next?.classList.contains('fruit-chip') ? next.dataset.itemId : null;
+        placeholder?.remove();
+        document.querySelectorAll('.reorder-target').forEach((node) => node.classList.remove('reorder-target', 'reorder-before', 'reorder-after'));
+        if (id) moveItem(id, zone.dataset.dropZone, beforeId, Boolean(zone.dataset.dropZone !== 'pool'));
       });
     });
   }
 
-  function moveItem(id, destination) {
+  function moveItem(id, destination, beforeId = null, forceReorder = false) {
     const fromTier = catalog.tiers.find((tier) => state.tiers[tier.id].includes(id));
     if (destination === 'pool' && !fromTier) return;
-    if (fromTier?.id === destination) return;
+    if (fromTier?.id === destination && !beforeId && !forceReorder) return;
 
     remember();
     for (const tier of catalog.tiers) {
       state.tiers[tier.id] = state.tiers[tier.id].filter((itemId) => itemId !== id);
     }
-    if (destination !== 'pool') state.tiers[destination].push(id);
+    if (destination !== 'pool') {
+      const target = state.tiers[destination];
+      const position = beforeId ? target.indexOf(beforeId) : -1;
+      target.splice(position < 0 ? target.length : position, 0, id);
+    }
 
     const now = Date.now();
     state.firstRatedAt ||= now;
@@ -507,7 +642,12 @@
   function reset() {
     if (rankedCount() === 0) return;
     remember();
+    const previousTime = state.timeSpentMs || 0;
+    const firstRatedAt = state.firstRatedAt;
     state = blankState();
+    state.timeSpentMs = previousTime;
+    state.firstRatedAt = firstRatedAt;
+    state.lastChangedAt = Date.now();
     selectedId = null;
     lastPlacedId = null;
     save();
